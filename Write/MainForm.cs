@@ -203,6 +203,9 @@ namespace Write
         #endregion
 
         #region Formatting Operations
+        private bool _updatingFormatButtons = false; // Flag to prevent recursive updates
+        private System.Windows.Forms.Timer? _fontChangeTimer; // Timer to debounce font changes
+
         private void ChangeFont(object? sender, EventArgs e)
         {
             var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
@@ -210,8 +213,7 @@ namespace Write
             if (fontDialog.ShowDialog() == DialogResult.OK)
             {
                 textEditor.ApplyFont(fontDialog.Font);
-                fontComboBox.Text = fontDialog.Font.FontFamily.Name;
-                fontSizeComboBox.Text = fontDialog.Font.Size.ToString();
+                UpdateFormatButtons();
                 statusLabel.Text = "Font changed";
             }
         }
@@ -236,34 +238,76 @@ namespace Write
                 statusLabel.Text = $"Color changed to {color.Name}";
             }
         }
+        
         private void FontComboBox_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (fontComboBox.SelectedItem != null && textEditor != null)
+            // Prevent recursive calls during format button updates
+            if (_updatingFormatButtons || fontComboBox.SelectedItem == null || textEditor == null)
+                return;
+
+            string fontName = fontComboBox.SelectedItem.ToString()!;
+            var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
+            
+            // Only apply if the font actually changed
+            if (string.Equals(fontName, currentFont.FontFamily.Name, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // Use a timer to debounce rapid changes (like when scrolling through the combo box)
+            if (_fontChangeTimer != null)
             {
-                string fontName = fontComboBox.SelectedItem.ToString()!;
-                var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
-                float fontSize = currentFont.Size;
-                FontStyle fontStyle = currentFont.Style;
+                _fontChangeTimer.Stop();
+                _fontChangeTimer.Dispose();
+            }
+
+            _fontChangeTimer = new System.Windows.Forms.Timer();
+            _fontChangeTimer.Interval = 100; // 100ms delay
+            _fontChangeTimer.Tick += (s, args) =>
+            {
+                _fontChangeTimer?.Stop();
+                _fontChangeTimer?.Dispose();
+                _fontChangeTimer = null;
                 
-                try
-                {
-                    var newFont = new Font(fontName, fontSize, fontStyle);
-                    textEditor.ApplyFont(newFont);
-                    statusLabel.Text = $"Font changed to {fontName}";
-                }
-                catch
-                {
-                    // Font not available, revert to previous selection
-                    fontComboBox.Text = currentFont.FontFamily.Name;
-                }
+                ApplyFontChange(fontName, currentFont);
+            };
+            _fontChangeTimer.Start();
+        }
+
+        private void ApplyFontChange(string fontName, Font currentFont)
+        {
+            float fontSize = currentFont.Size;
+            FontStyle fontStyle = currentFont.Style;
+            
+            try
+            {
+                var newFont = new Font(fontName, fontSize, fontStyle);
+                textEditor.ApplyFont(newFont);
+                UpdateFormatButtons();
+                statusLabel.Text = $"Font changed to {fontName}";
+            }
+            catch
+            {
+                // Font not available, revert to previous selection
+                _updatingFormatButtons = true;
+                fontComboBox.Text = currentFont.FontFamily.Name;
+                _updatingFormatButtons = false;
+                statusLabel.Text = $"Font '{fontName}' is not available";
             }
         }
 
         private void FontSizeComboBox_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (fontSizeComboBox.SelectedItem != null && textEditor != null && float.TryParse(fontSizeComboBox.SelectedItem.ToString(), out float fontSize))
+            // Prevent recursive calls during format button updates
+            if (_updatingFormatButtons || fontSizeComboBox.SelectedItem == null || textEditor == null)
+                return;
+
+            if (float.TryParse(fontSizeComboBox.SelectedItem.ToString(), out float fontSize))
             {
                 var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
+                
+                // Only apply if the size actually changed
+                if (Math.Abs(fontSize - currentFont.Size) < 0.1f)
+                    return;
+
                 string fontName = currentFont.FontFamily.Name;
                 FontStyle fontStyle = currentFont.Style;
                 
@@ -271,12 +315,15 @@ namespace Write
                 {
                     var newFont = new Font(fontName, fontSize, fontStyle);
                     textEditor.ApplyFont(newFont);
+                    UpdateFormatButtons();
                     statusLabel.Text = $"Font size changed to {fontSize}";
                 }
                 catch
                 {
                     // Invalid size, revert
+                    _updatingFormatButtons = true;
                     fontSizeComboBox.Text = currentFont.Size.ToString();
+                    _updatingFormatButtons = false;
                 }
             }
         }
@@ -320,6 +367,7 @@ namespace Write
                 
                 var newFont = new Font(currentFont.FontFamily, currentFont.Size, newStyle);
                 textEditor.ApplyFont(newFont);
+                UpdateFormatButtons();
             }
         }
 
@@ -368,7 +416,11 @@ namespace Write
 
         private void UpdateFormatButtons()
         {
-            if (textEditor != null)
+            if (textEditor == null || _updatingFormatButtons)
+                return;
+
+            _updatingFormatButtons = true;
+            try
             {
                 var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
                 var currentColor = textEditor.GetSelectionColor();
@@ -382,6 +434,10 @@ namespace Write
                 
                 // Update font color button to show current color
                 fontColorToolStripButton.ForeColor = currentColor;
+            }
+            finally
+            {
+                _updatingFormatButtons = false;
             }
         }
 
@@ -419,6 +475,14 @@ namespace Write
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // Clean up timer
+            if (_fontChangeTimer != null)
+            {
+                _fontChangeTimer.Stop();
+                _fontChangeTimer.Dispose();
+                _fontChangeTimer = null;
+            }
+
             if (!CheckSaveChanges())
             {
                 e.Cancel = true;

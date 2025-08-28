@@ -449,13 +449,20 @@ namespace Write
                 using var g1 = CreateGraphics();
                 var defaultHeight = g1.MeasureString("Ag", _currentFont).Height;
                 _lines.Add(new LineInfo { StartIndex = 0, Length = 0, Height = defaultHeight });
+                
+                // Reset scroll position for empty content
+                _topLine = 0;
+                _leftOffset = 0;
+                UpdateScrollBars();
                 return;
             }
 
             using var g = CreateGraphics();
             int lineStart = 0;
             float currentX = 0;
-            float maxWidth = Width - _vScrollBar.Width - 10;
+            
+            // Ensure we have a minimum width to prevent infinite wrapping
+            float maxWidth = Math.Max(50, Width - (_vScrollBar.Visible ? _vScrollBar.Width : 0) - 20);
 
             for (int i = 0; i < _textElements.Count; i++)
             {
@@ -511,6 +518,12 @@ namespace Write
                 });
             }
 
+            // Ensure _topLine is within valid bounds
+            if (_topLine >= _lines.Count)
+            {
+                _topLine = Math.Max(0, _lines.Count - 1);
+            }
+
             UpdateScrollBars();
         }
 
@@ -552,9 +565,11 @@ namespace Write
 
             if (_lines.Count == 0) return;
 
+            // Ensure _topLine is within valid bounds
+            _topLine = Math.Max(0, Math.Min(_topLine, _lines.Count - 1));
+
             // Draw text and selection
             float y = 0;
-            int currentTopLine = 0;
             
             // Calculate the Y offset based on _topLine
             for (int i = 0; i < _topLine && i < _lines.Count; i++)
@@ -583,17 +598,21 @@ namespace Write
 
                     var size = g.MeasureString(element.Text, element.Font);
 
-                    // Draw selection background
-                    if (IsInSelection(i))
+                    // Only draw if the character is within visible bounds
+                    if (x + size.Width > 0 && x < Width)
                     {
-                        g.FillRectangle(new SolidBrush(_selectionBackColor), 
-                            x, y, size.Width, lineHeight);
-                    }
+                        // Draw selection background
+                        if (IsInSelection(i))
+                        {
+                            g.FillRectangle(new SolidBrush(_selectionBackColor), 
+                                x, y, size.Width, lineHeight);
+                        }
 
-                    // Draw text - align to baseline within the line height
-                    float textY = y + (lineHeight - size.Height) / 2; // Center vertically within line height
-                    g.DrawString(element.Text, element.Font, 
-                        new SolidBrush(element.Color), x, textY);
+                        // Draw text - align to baseline within the line height
+                        float textY = y + (lineHeight - size.Height) / 2; // Center vertically within line height
+                        g.DrawString(element.Text, element.Font, 
+                            new SolidBrush(element.Color), x, textY);
+                    }
 
                     x += size.Width;
                 }
@@ -605,7 +624,11 @@ namespace Write
             if (Focused && _cursorVisible && _selectionLength == 0)
             {
                 var cursorRect = GetCursorRectangle();
-                g.FillRectangle(new SolidBrush(_cursorColor), cursorRect);
+                // Only draw cursor if it's within visible bounds
+                if (cursorRect.X >= 0 && cursorRect.X < Width && cursorRect.Y >= 0 && cursorRect.Y < Height)
+                {
+                    g.FillRectangle(new SolidBrush(_cursorColor), cursorRect);
+                }
             }
         }
 
@@ -741,6 +764,8 @@ namespace Write
 
         private void UpdateScrollBars()
         {
+            if (_lines.Count == 0) return;
+
             int totalLines = _lines.Count;
             
             // Calculate total height and visible lines
@@ -761,10 +786,28 @@ namespace Write
                 visibleLines++;
             }
             
-            _vScrollBar.Maximum = Math.Max(0, totalLines - 1);
-            _vScrollBar.LargeChange = Math.Max(1, visibleLines);
-            _vScrollBar.SmallChange = 1;
-            _vScrollBar.Visible = totalHeight > visibleHeight;
+            // Vertical scrollbar configuration
+            bool needsVScroll = totalHeight > visibleHeight;
+            _vScrollBar.Visible = needsVScroll;
+            
+            if (needsVScroll)
+            {
+                _vScrollBar.Maximum = Math.Max(0, totalLines - 1);
+                _vScrollBar.LargeChange = Math.Max(1, visibleLines);
+                _vScrollBar.SmallChange = 1;
+                
+                // Ensure _topLine is within valid bounds
+                if (_topLine > _vScrollBar.Maximum)
+                {
+                    _topLine = _vScrollBar.Maximum;
+                }
+                _vScrollBar.Value = Math.Max(0, Math.Min(_topLine, _vScrollBar.Maximum));
+            }
+            else
+            {
+                _topLine = 0;
+                _vScrollBar.Value = 0;
+            }
 
             // Calculate maximum text width
             float maxWidth = 0;
@@ -784,11 +827,30 @@ namespace Write
                 maxWidth = Math.Max(maxWidth, lineWidth);
             }
 
+            // Horizontal scrollbar configuration
             int visibleWidth = Width - (_vScrollBar.Visible ? _vScrollBar.Width : 0);
-            _hScrollBar.Maximum = Math.Max(0, (int)maxWidth - visibleWidth);
-            _hScrollBar.LargeChange = Math.Max(1, visibleWidth);
-            _hScrollBar.SmallChange = 20;
-            _hScrollBar.Visible = maxWidth > visibleWidth;
+            bool needsHScroll = maxWidth > visibleWidth;
+            
+            _hScrollBar.Visible = needsHScroll;
+            
+            if (needsHScroll)
+            {
+                _hScrollBar.Maximum = Math.Max(0, (int)maxWidth - visibleWidth);
+                _hScrollBar.LargeChange = Math.Max(1, visibleWidth);
+                _hScrollBar.SmallChange = 20;
+                
+                // Ensure _leftOffset is within valid bounds
+                if (_leftOffset > _hScrollBar.Maximum)
+                {
+                    _leftOffset = _hScrollBar.Maximum;
+                }
+                _hScrollBar.Value = Math.Max(0, Math.Min(_leftOffset, _hScrollBar.Maximum));
+            }
+            else
+            {
+                _leftOffset = 0;
+                _hScrollBar.Value = 0;
+            }
         }
 
         private void VScrollBar_Scroll(object? sender, ScrollEventArgs e)
@@ -805,10 +867,15 @@ namespace Write
 
         private void EnsureCursorVisible()
         {
+            if (_lines.Count == 0) return;
+
             var cursorPos = GetPositionFromIndex(_cursorPosition);
             
             // Vertical scrolling
             int cursorLine = GetLineFromIndex(_cursorPosition);
+            
+            // Ensure cursor line is within valid bounds
+            cursorLine = Math.Max(0, Math.Min(cursorLine, _lines.Count - 1));
             
             // Calculate cumulative heights to determine if cursor line is visible
             float topLineY = GetYOffsetToLine(_topLine);
@@ -819,7 +886,10 @@ namespace Write
             {
                 // Cursor is above visible area
                 _topLine = cursorLine;
-                _vScrollBar.Value = Math.Max(0, _topLine);
+                if (_vScrollBar.Visible)
+                {
+                    _vScrollBar.Value = Math.Max(0, Math.Min(_topLine, _vScrollBar.Maximum));
+                }
             }
             else if (cursorLineY + cursorLineHeight > topLineY + Height)
             {
@@ -839,8 +909,11 @@ namespace Write
                     newTopLine = i + 1;
                 }
                 
-                _topLine = Math.Min(newTopLine, _vScrollBar.Maximum);
-                _vScrollBar.Value = _topLine;
+                _topLine = Math.Max(0, Math.Min(newTopLine, _lines.Count - 1));
+                if (_vScrollBar.Visible)
+                {
+                    _vScrollBar.Value = Math.Max(0, Math.Min(_topLine, _vScrollBar.Maximum));
+                }
             }
 
             // Horizontal scrolling
@@ -848,13 +921,19 @@ namespace Write
             
             if (cursorPos.X < _leftOffset)
             {
-                _leftOffset = (int)cursorPos.X;
-                _hScrollBar.Value = Math.Max(0, _leftOffset);
+                _leftOffset = Math.Max(0, (int)cursorPos.X);
+                if (_hScrollBar.Visible)
+                {
+                    _hScrollBar.Value = Math.Max(0, Math.Min(_leftOffset, _hScrollBar.Maximum));
+                }
             }
             else if (cursorPos.X >= _leftOffset + visibleWidth)
             {
-                _leftOffset = (int)(cursorPos.X - visibleWidth + 50);
-                _hScrollBar.Value = Math.Min(_leftOffset, _hScrollBar.Maximum);
+                _leftOffset = Math.Max(0, (int)(cursorPos.X - visibleWidth + 50));
+                if (_hScrollBar.Visible)
+                {
+                    _hScrollBar.Value = Math.Max(0, Math.Min(_leftOffset, _hScrollBar.Maximum));
+                }
             }
 
             Invalidate();
@@ -1030,9 +1109,18 @@ namespace Write
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            
+            // Store current cursor position to restore after recalculation
+            int oldCursorPosition = _cursorPosition;
+            
             RecalculateLines();
             UpdateScrollBars();
+            
+            // Restore cursor position and ensure it's visible
+            _cursorPosition = oldCursorPosition;
             EnsureCursorVisible();
+            
+            Invalidate();
         }
         #endregion
 
@@ -1255,7 +1343,14 @@ namespace Write
             if (_undoRedoManager.CanUndo)
             {
                 var action = _undoRedoManager.Undo();
-                ApplyAction(action, true);
+                if (action is TextAction textAction)
+                {
+                    ApplyTextAction(textAction, true);
+                }
+                else if (action is FontAction fontAction)
+                {
+                    ApplyFontAction(fontAction, true);
+                }
             }
         }
 
@@ -1264,11 +1359,18 @@ namespace Write
             if (_undoRedoManager.CanRedo)
             {
                 var action = _undoRedoManager.Redo();
-                ApplyAction(action, false);
+                if (action is TextAction textAction)
+                {
+                    ApplyTextAction(textAction, false);
+                }
+                else if (action is FontAction fontAction)
+                {
+                    ApplyFontAction(fontAction, false);
+                }
             }
         }
 
-        private void ApplyAction(TextAction action, bool isUndo)
+        private void ApplyTextAction(TextAction action, bool isUndo)
         {
             switch (action.Type)
             {
@@ -1318,6 +1420,43 @@ namespace Write
             OnSelectionChanged();
         }
 
+        private void ApplyFontAction(FontAction action, bool isUndo)
+        {
+            if (isUndo)
+            {
+                // Restore original formatting
+                for (int i = 0; i < action.OriginalElements.Count && action.Position + i < _textElements.Count; i++)
+                {
+                    _textElements[action.Position + i] = action.OriginalElements[i];
+                }
+            }
+            else
+            {
+                // Reapply the formatting change
+                for (int i = action.Position; i < action.Position + action.Length && i < _textElements.Count; i++)
+                {
+                    if (action.Type == TextActionType.FontChange && action.NewFont != null)
+                    {
+                        _textElements[i] = new TextElement(_textElements[i].Text, action.NewFont, _textElements[i].Color);
+                    }
+                    else if (action.Type == TextActionType.ColorChange && action.NewColor != null)
+                    {
+                        _textElements[i] = new TextElement(_textElements[i].Text, _textElements[i].Font, action.NewColor.Value);
+                    }
+                }
+            }
+
+            _selectionStart = action.OldSelectionStart;
+            _selectionLength = action.OldSelectionLength;
+            _cursorPosition = action.NewCursorPosition;
+
+            RecalculateLines();
+            EnsureCursorVisible();
+            Invalidate();
+            OnTextChanged();
+            OnSelectionChanged();
+        }
+
         private void InsertTextAtPosition(string text, int position)
         {
             var elements = StringInfo.GetTextElementEnumerator(text);
@@ -1350,28 +1489,45 @@ namespace Write
         {
             if (_selectionLength > 0)
             {
-                // Create undo action for font change
-                var action = new TextAction
-                {
-                    Type = TextActionType.Replace,
-                    Position = Math.Min(_selectionStart, _selectionStart + _selectionLength),
-                    Text = GetSelectedText(),
-                    OldSelectionStart = _selectionStart,
-                    OldSelectionLength = _selectionLength
-                };
-
                 int start = Math.Min(_selectionStart, _selectionStart + _selectionLength);
                 int length = Math.Abs(_selectionLength);
 
-                for (int i = start; i < start + length && i < _textElements.Count; i++)
+                // Validate bounds
+                if (start >= _textElements.Count || length == 0)
+                    return;
+
+                // Ensure we don't go beyond the text elements
+                length = Math.Min(length, _textElements.Count - start);
+
+                // Store the original formatting for undo
+                var originalElements = new List<TextElement>(length);
+                for (int i = start; i < start + length; i++)
+                {
+                    originalElements.Add(_textElements[i]);
+                }
+
+                // Apply the new font in a batch operation
+                for (int i = start; i < start + length; i++)
                 {
                     _textElements[i] = new TextElement(_textElements[i].Text, font, _textElements[i].Color);
                 }
 
-                action.NewText = GetSelectedText();
-                action.NewCursorPosition = _cursorPosition;
-                _undoRedoManager.AddAction(action);
+                // Create undo action with proper data
+                var action = new FontAction
+                {
+                    Type = TextActionType.FontChange,
+                    Position = start,
+                    Length = length,
+                    OriginalElements = originalElements,
+                    NewFont = font,
+                    OldSelectionStart = _selectionStart,
+                    OldSelectionLength = _selectionLength,
+                    NewCursorPosition = _cursorPosition
+                };
 
+                _undoRedoManager.AddFontAction(action);
+
+                // Update display
                 RecalculateLines();
                 Invalidate();
                 OnTextChanged();
@@ -1386,27 +1542,43 @@ namespace Write
         {
             if (_selectionLength > 0)
             {
-                // Create undo action for color change
-                var action = new TextAction
-                {
-                    Type = TextActionType.Replace,
-                    Position = Math.Min(_selectionStart, _selectionStart + _selectionLength),
-                    Text = GetSelectedText(),
-                    OldSelectionStart = _selectionStart,
-                    OldSelectionLength = _selectionLength
-                };
-
                 int start = Math.Min(_selectionStart, _selectionStart + _selectionLength);
                 int length = Math.Abs(_selectionLength);
 
-                for (int i = start; i < start + length && i < _textElements.Count; i++)
+                // Validate bounds
+                if (start >= _textElements.Count || length == 0)
+                    return;
+
+                // Ensure we don't go beyond the text elements
+                length = Math.Min(length, _textElements.Count - start);
+
+                // Store the original formatting for undo
+                var originalElements = new List<TextElement>(length);
+                for (int i = start; i < start + length; i++)
+                {
+                    originalElements.Add(_textElements[i]);
+                }
+
+                // Apply the new color in a batch operation
+                for (int i = start; i < start + length; i++)
                 {
                     _textElements[i] = new TextElement(_textElements[i].Text, _textElements[i].Font, color);
                 }
 
-                action.NewText = GetSelectedText();
-                action.NewCursorPosition = _cursorPosition;
-                _undoRedoManager.AddAction(action);
+                // Create undo action with proper data
+                var action = new FontAction
+                {
+                    Type = TextActionType.ColorChange,
+                    Position = start,
+                    Length = length,
+                    OriginalElements = originalElements,
+                    NewColor = color,
+                    OldSelectionStart = _selectionStart,
+                    OldSelectionLength = _selectionLength,
+                    NewCursorPosition = _cursorPosition
+                };
+
+                _undoRedoManager.AddFontAction(action);
 
                 Invalidate();
                 OnTextChanged();
@@ -1516,7 +1688,9 @@ namespace Write
     {
         Insert,
         Delete,
-        Replace
+        Replace,
+        FontChange,
+        ColorChange
     }
 
     public class TextAction
@@ -1530,10 +1704,23 @@ namespace Write
         public int NewCursorPosition { get; set; }
     }
 
+    public class FontAction
+    {
+        public TextActionType Type { get; set; }
+        public int Position { get; set; }
+        public int Length { get; set; }
+        public List<TextElement> OriginalElements { get; set; } = new();
+        public Font? NewFont { get; set; }
+        public Color? NewColor { get; set; }
+        public int OldSelectionStart { get; set; }
+        public int OldSelectionLength { get; set; }
+        public int NewCursorPosition { get; set; }
+    }
+
     public class UndoRedoManager
     {
-        private readonly Stack<TextAction> _undoStack = new();
-        private readonly Stack<TextAction> _redoStack = new();
+        private readonly Stack<object> _undoStack = new();
+        private readonly Stack<object> _redoStack = new();
         private const int MaxUndoLevels = 100;
 
         public bool CanUndo => _undoStack.Count > 0;
@@ -1545,6 +1732,20 @@ namespace Write
             _redoStack.Clear();
 
             // Limit undo stack size
+            LimitStackSize();
+        }
+
+        public void AddFontAction(FontAction action)
+        {
+            _undoStack.Push(action);
+            _redoStack.Clear();
+
+            // Limit undo stack size
+            LimitStackSize();
+        }
+
+        private void LimitStackSize()
+        {
             if (_undoStack.Count > MaxUndoLevels)
             {
                 var items = _undoStack.ToArray();
@@ -1556,7 +1757,7 @@ namespace Write
             }
         }
 
-        public TextAction Undo()
+        public object Undo()
         {
             if (!CanUndo) throw new InvalidOperationException("Nothing to undo");
             
@@ -1565,7 +1766,7 @@ namespace Write
             return action;
         }
 
-        public TextAction Redo()
+        public object Redo()
         {
             if (!CanRedo) throw new InvalidOperationException("Nothing to redo");
             
