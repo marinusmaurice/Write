@@ -361,7 +361,10 @@ namespace Write
             _lines.Clear();
             if (_textElements.Count == 0)
             {
-                _lines.Add(new LineInfo { StartIndex = 0, Length = 0 });
+                // Calculate default line height for empty lines
+                using var g1 = CreateGraphics();
+                var defaultHeight = g1.MeasureString("Ag", _currentFont).Height;
+                _lines.Add(new LineInfo { StartIndex = 0, Length = 0, Height = defaultHeight });
                 return;
             }
 
@@ -376,10 +379,14 @@ namespace Write
                 
                 if (element.Text == "\n" || element.Text == "\r\n")
                 {
+                    // Calculate line height for this line
+                    float lineHeight = CalculateLineHeight(lineStart, i);
+                    
                     _lines.Add(new LineInfo 
                     { 
                         StartIndex = lineStart, 
-                        Length = i - lineStart + 1 
+                        Length = i - lineStart + 1,
+                        Height = lineHeight
                     });
                     lineStart = i + 1;
                     currentX = 0;
@@ -389,10 +396,14 @@ namespace Write
                 var size = g.MeasureString(element.Text, element.Font);
                 if (currentX + size.Width > maxWidth && currentX > 0)
                 {
+                    // Calculate line height for this line
+                    float lineHeight = CalculateLineHeight(lineStart, i - 1);
+                    
                     _lines.Add(new LineInfo 
                     { 
                         StartIndex = lineStart, 
-                        Length = i - lineStart 
+                        Length = i - lineStart,
+                        Height = lineHeight
                     });
                     lineStart = i;
                     currentX = size.Width;
@@ -405,14 +416,49 @@ namespace Write
 
             if (lineStart < _textElements.Count)
             {
+                // Calculate line height for the last line
+                float lineHeight = CalculateLineHeight(lineStart, _textElements.Count - 1);
+                
                 _lines.Add(new LineInfo 
                 { 
                     StartIndex = lineStart, 
-                    Length = _textElements.Count - lineStart 
+                    Length = _textElements.Count - lineStart,
+                    Height = lineHeight
                 });
             }
 
             UpdateScrollBars();
+        }
+
+        private float CalculateLineHeight(int startIndex, int endIndex)
+        {
+            if (startIndex > endIndex || startIndex >= _textElements.Count)
+            {
+                // Return default height for empty or invalid ranges
+                using var graphics1 = CreateGraphics();
+                return graphics1.MeasureString("Ag", _currentFont).Height;
+            }
+
+            using var graphics = CreateGraphics();
+            float maxHeight = 0;
+
+            for (int i = startIndex; i <= endIndex && i < _textElements.Count; i++)
+            {
+                var element = _textElements[i];
+                if (element.Text == "\n" || element.Text == "\r\n") continue;
+
+                // Measure the height of this text element
+                var size = graphics.MeasureString("Ag", element.Font); // Use "Ag" for consistent height measurement
+                maxHeight = Math.Max(maxHeight, size.Height);
+            }
+
+            // If no valid characters found, use default font
+            if (maxHeight == 0)
+            {
+                maxHeight = graphics.MeasureString("Ag", _currentFont).Height;
+            }
+
+            return maxHeight;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -423,18 +469,27 @@ namespace Write
             if (_lines.Count == 0) return;
 
             // Draw text and selection
-            float y = -_topLine * _lineHeight;
+            float y = 0;
+            int currentTopLine = 0;
             
-            for (int lineIndex = 0; lineIndex < _lines.Count; lineIndex++)
+            // Calculate the Y offset based on _topLine
+            for (int i = 0; i < _topLine && i < _lines.Count; i++)
             {
+                y -= _lines[i].Height;
+            }
+            
+            for (int lineIndex = _topLine; lineIndex < _lines.Count; lineIndex++)
+            {
+                var line = _lines[lineIndex];
+                float lineHeight = line.Height;
+                
                 if (y > Height) break;
-                if (y + _lineHeight < 0)
+                if (y + lineHeight < 0)
                 {
-                    y += _lineHeight;
+                    y += lineHeight;
                     continue;
                 }
 
-                var line = _lines[lineIndex];
                 float x = -_leftOffset;
 
                 for (int i = line.StartIndex; i < line.StartIndex + line.Length && i < _textElements.Count; i++)
@@ -448,17 +503,18 @@ namespace Write
                     if (IsInSelection(i))
                     {
                         g.FillRectangle(new SolidBrush(_selectionBackColor), 
-                            x, y, size.Width, _lineHeight);
+                            x, y, size.Width, lineHeight);
                     }
 
-                    // Draw text
+                    // Draw text - align to baseline within the line height
+                    float textY = y + (lineHeight - size.Height) / 2; // Center vertically within line height
                     g.DrawString(element.Text, element.Font, 
-                        new SolidBrush(element.Color), x, y);
+                        new SolidBrush(element.Color), x, textY);
 
                     x += size.Width;
                 }
 
-                y += _lineHeight;
+                y += lineHeight;
             }
 
             // Draw cursor
@@ -482,11 +538,16 @@ namespace Write
         private Rectangle GetCursorRectangle()
         {
             var pos = GetPositionFromIndex(_cursorPosition);
+            
+            // Find the line containing the cursor to get its height
+            int lineIndex = GetLineFromIndex(_cursorPosition);
+            float lineHeight = lineIndex < _lines.Count ? _lines[lineIndex].Height : _lineHeight;
+            
             return new Rectangle(
                 (int)(pos.X - _leftOffset), 
-                (int)(pos.Y - _topLine * _lineHeight), 
+                (int)(pos.Y - GetYOffsetToLine(_topLine)), 
                 1, 
-                (int)_lineHeight);
+                (int)lineHeight);
         }
 
         private PointF GetPositionFromIndex(int index)
@@ -505,20 +566,21 @@ namespace Write
                 }
             }
 
-            float y = lineIndex * _lineHeight;
+            // Calculate Y position based on cumulative line heights
+            float y = GetYOffsetToLine(lineIndex);
             float x = 0;
 
             if (lineIndex < _lines.Count)
             {
                 var line = _lines[lineIndex];
-                using var g = CreateGraphics();
+                using var graphics = CreateGraphics();
                 
                 for (int i = line.StartIndex; i < index && i < _textElements.Count; i++)
                 {
                     var element = _textElements[i];
                     if (element.Text == "\n" || element.Text == "\r\n") continue;
                     
-                    var size = g.MeasureString(element.Text, element.Font);
+                    var size = graphics.MeasureString(element.Text, element.Font);
                     x += size.Width;
                 }
             }
@@ -526,12 +588,36 @@ namespace Write
             return new PointF(x, y);
         }
 
+        private float GetYOffsetToLine(int lineIndex)
+        {
+            float y = 0;
+            for (int i = 0; i < lineIndex && i < _lines.Count; i++)
+            {
+                y += _lines[i].Height;
+            }
+            return y;
+        }
+
         private int GetIndexFromPosition(Point point)
         {
             float adjustedX = point.X + _leftOffset;
-            float adjustedY = point.Y + _topLine * _lineHeight;
+            float adjustedY = point.Y + GetYOffsetToLine(_topLine);
             
-            int lineIndex = (int)(adjustedY / _lineHeight);
+            // Find which line contains this Y coordinate
+            int lineIndex = 0;
+            float currentY = 0;
+            
+            for (int i = 0; i < _lines.Count; i++)
+            {
+                if (adjustedY <= currentY + _lines[i].Height)
+                {
+                    lineIndex = i;
+                    break;
+                }
+                currentY += _lines[i].Height;
+                lineIndex = i + 1;
+            }
+            
             if (lineIndex < 0) return 0;
             if (lineIndex >= _lines.Count) return _textElements.Count;
 
@@ -572,12 +658,29 @@ namespace Write
         private void UpdateScrollBars()
         {
             int totalLines = _lines.Count;
-            int visibleLines = (int)(Height / _lineHeight);
+            
+            // Calculate total height and visible lines
+            float totalHeight = 0;
+            foreach (var line in _lines)
+            {
+                totalHeight += line.Height;
+            }
+            
+            float visibleHeight = Height;
+            int visibleLines = 0;
+            float currentHeight = 0;
+            
+            // Calculate how many lines can fit in the visible area
+            for (int i = 0; i < _lines.Count && currentHeight < visibleHeight; i++)
+            {
+                currentHeight += _lines[i].Height;
+                visibleLines++;
+            }
             
             _vScrollBar.Maximum = Math.Max(0, totalLines - 1);
             _vScrollBar.LargeChange = Math.Max(1, visibleLines);
             _vScrollBar.SmallChange = 1;
-            _vScrollBar.Visible = totalLines > visibleLines;
+            _vScrollBar.Visible = totalHeight > visibleHeight;
 
             // Calculate maximum text width
             float maxWidth = 0;
@@ -621,18 +724,39 @@ namespace Write
             var cursorPos = GetPositionFromIndex(_cursorPosition);
             
             // Vertical scrolling
-            int cursorLine = (int)(cursorPos.Y / _lineHeight);
-            int visibleLines = (int)(Height / _lineHeight);
+            int cursorLine = GetLineFromIndex(_cursorPosition);
             
-            if (cursorLine < _topLine)
+            // Calculate cumulative heights to determine if cursor line is visible
+            float topLineY = GetYOffsetToLine(_topLine);
+            float cursorLineY = GetYOffsetToLine(cursorLine);
+            float cursorLineHeight = cursorLine < _lines.Count ? _lines[cursorLine].Height : _lineHeight;
+            
+            if (cursorLineY < topLineY)
             {
+                // Cursor is above visible area
                 _topLine = cursorLine;
-                _vScrollBar.Value = _topLine;
+                _vScrollBar.Value = Math.Max(0, _topLine);
             }
-            else if (cursorLine >= _topLine + visibleLines)
+            else if (cursorLineY + cursorLineHeight > topLineY + Height)
             {
-                _topLine = cursorLine - visibleLines + 1;
-                _vScrollBar.Value = Math.Min(_topLine, _vScrollBar.Maximum);
+                // Cursor is below visible area - scroll up until cursor line is visible
+                float targetY = cursorLineY + cursorLineHeight - Height;
+                
+                int newTopLine = 0;
+                float currentY = 0;
+                for (int i = 0; i < _lines.Count; i++)
+                {
+                    if (currentY >= targetY)
+                    {
+                        newTopLine = i;
+                        break;
+                    }
+                    currentY += _lines[i].Height;
+                    newTopLine = i + 1;
+                }
+                
+                _topLine = Math.Min(newTopLine, _vScrollBar.Maximum);
+                _vScrollBar.Value = _topLine;
             }
 
             // Horizontal scrolling
@@ -861,7 +985,16 @@ namespace Write
         private void MoveCursorVertical(int direction, bool shift)
         {
             var currentPos = GetPositionFromIndex(_cursorPosition);
-            var targetY = currentPos.Y + direction * _lineHeight;
+            int currentLine = GetLineFromIndex(_cursorPosition);
+            int targetLine = currentLine + direction;
+            
+            if (targetLine < 0) targetLine = 0;
+            if (targetLine >= _lines.Count) targetLine = _lines.Count - 1;
+            
+            if (targetLine == currentLine) return; // No movement needed
+            
+            // Calculate target Y position
+            float targetY = GetYOffsetToLine(targetLine);
             var newIndex = GetIndexFromPosition(new Point((int)currentPos.X, (int)targetY));
 
             if (shift)
@@ -1238,6 +1371,7 @@ namespace Write
     {
         public int StartIndex { get; set; }
         public int Length { get; set; }
+        public float Height { get; set; }
     }
 
     public enum TextActionType
