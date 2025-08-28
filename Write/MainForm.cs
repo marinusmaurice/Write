@@ -222,10 +222,20 @@ namespace Write
             if (colorDialog.ShowDialog() == DialogResult.OK)
             {
                 textEditor.ApplyColor(colorDialog.Color);
+                UpdateFormatButtons();
                 statusLabel.Text = "Text color changed";
             }
         }
 
+        public void ApplyQuickColor(Color color)
+        {
+            if (textEditor != null)
+            {
+                textEditor.ApplyColor(color);
+                UpdateFormatButtons();
+                statusLabel.Text = $"Color changed to {color.Name}";
+            }
+        }
         private void FontComboBox_SelectedIndexChanged(object? sender, EventArgs e)
         {
             if (fontComboBox.SelectedItem != null && textEditor != null)
@@ -361,6 +371,7 @@ namespace Write
             if (textEditor != null)
             {
                 var currentFont = textEditor.GetSelectionFont() ?? textEditor.CurrentFont;
+                var currentColor = textEditor.GetSelectionColor();
                 
                 boldToolStripButton.Checked = IsStyleApplied(FontStyle.Bold);
                 italicToolStripButton.Checked = IsStyleApplied(FontStyle.Italic);
@@ -368,6 +379,9 @@ namespace Write
                 
                 fontComboBox.Text = currentFont.FontFamily.Name;
                 fontSizeComboBox.Text = currentFont.Size.ToString();
+                
+                // Update font color button to show current color
+                fontColorToolStripButton.ForeColor = currentColor;
             }
         }
 
@@ -391,6 +405,12 @@ namespace Write
                     return true;
                 case Keys.Control | Keys.U:
                     UnderlineText(null, EventArgs.Empty);
+                    return true;
+                case Keys.Control | Keys.Shift | Keys.C:
+                    ChangeColor(null, EventArgs.Empty);
+                    return true;
+                case Keys.Control | Keys.Shift | Keys.F:
+                    ChangeFont(null, EventArgs.Empty);
                     return true;
             }
             

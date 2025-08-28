@@ -1350,6 +1350,16 @@ namespace Write
         {
             if (_selectionLength > 0)
             {
+                // Create undo action for font change
+                var action = new TextAction
+                {
+                    Type = TextActionType.Replace,
+                    Position = Math.Min(_selectionStart, _selectionStart + _selectionLength),
+                    Text = GetSelectedText(),
+                    OldSelectionStart = _selectionStart,
+                    OldSelectionLength = _selectionLength
+                };
+
                 int start = Math.Min(_selectionStart, _selectionStart + _selectionLength);
                 int length = Math.Abs(_selectionLength);
 
@@ -1358,8 +1368,13 @@ namespace Write
                     _textElements[i] = new TextElement(_textElements[i].Text, font, _textElements[i].Color);
                 }
 
+                action.NewText = GetSelectedText();
+                action.NewCursorPosition = _cursorPosition;
+                _undoRedoManager.AddAction(action);
+
                 RecalculateLines();
                 Invalidate();
+                OnTextChanged();
             }
             else
             {
@@ -1371,6 +1386,16 @@ namespace Write
         {
             if (_selectionLength > 0)
             {
+                // Create undo action for color change
+                var action = new TextAction
+                {
+                    Type = TextActionType.Replace,
+                    Position = Math.Min(_selectionStart, _selectionStart + _selectionLength),
+                    Text = GetSelectedText(),
+                    OldSelectionStart = _selectionStart,
+                    OldSelectionLength = _selectionLength
+                };
+
                 int start = Math.Min(_selectionStart, _selectionStart + _selectionLength);
                 int length = Math.Abs(_selectionLength);
 
@@ -1379,7 +1404,12 @@ namespace Write
                     _textElements[i] = new TextElement(_textElements[i].Text, _textElements[i].Font, color);
                 }
 
+                action.NewText = GetSelectedText();
+                action.NewCursorPosition = _cursorPosition;
+                _undoRedoManager.AddAction(action);
+
                 Invalidate();
+                OnTextChanged();
             }
             else
             {
