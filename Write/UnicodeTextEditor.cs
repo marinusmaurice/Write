@@ -65,6 +65,90 @@ namespace Write
             RecalculateLines();
         }
 
+        protected override bool IsInputKey(Keys keyData)
+        {
+            // Tell Windows Forms that we want to handle these keys
+            switch (keyData & Keys.KeyCode)
+            {
+                case Keys.Left:
+                case Keys.Right:
+                case Keys.Up:
+                case Keys.Down:
+                case Keys.Home:
+                case Keys.End:
+                case Keys.PageUp:
+                case Keys.PageDown:
+                case Keys.Delete:
+                case Keys.Back:
+                case Keys.Enter:
+                case Keys.Tab:
+                    return true;
+            }
+            
+            // Also handle combinations with modifiers
+            if ((keyData & Keys.Control) == Keys.Control)
+            {
+                switch (keyData & Keys.KeyCode)
+                {
+                    case Keys.Left:
+                    case Keys.Right:
+                    case Keys.Up:
+                    case Keys.Down:
+                    case Keys.Home:
+                    case Keys.End:
+                    case Keys.A:
+                    case Keys.C:
+                    case Keys.V:
+                    case Keys.X:
+                    case Keys.Z:
+                    case Keys.Y:
+                        return true;
+                }
+            }
+            
+            if ((keyData & Keys.Shift) == Keys.Shift)
+            {
+                switch (keyData & Keys.KeyCode)
+                {
+                    case Keys.Left:
+                    case Keys.Right:
+                    case Keys.Up:
+                    case Keys.Down:
+                    case Keys.Home:
+                    case Keys.End:
+                    case Keys.PageUp:
+                    case Keys.PageDown:
+                        return true;
+                }
+            }
+            
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnPreviewKeyDown(PreviewKeyDownEventArgs e)
+        {
+            // Ensure these keys are treated as input keys
+            switch (e.KeyCode)
+            {
+                case Keys.Left:
+                case Keys.Right:
+                case Keys.Up:
+                case Keys.Down:
+                case Keys.Home:
+                case Keys.End:
+                case Keys.PageUp:
+                case Keys.PageDown:
+                case Keys.Delete:
+                case Keys.Back:
+                case Keys.Enter:
+                case Keys.Tab:
+                    e.IsInputKey = true;
+                    break;
+            }
+            
+            base.OnPreviewKeyDown(e);
+        }
+
         #region Properties
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -984,7 +1068,6 @@ namespace Write
 
         private void MoveCursorVertical(int direction, bool shift)
         {
-            var currentPos = GetPositionFromIndex(_cursorPosition);
             int currentLine = GetLineFromIndex(_cursorPosition);
             int targetLine = currentLine + direction;
             
@@ -993,9 +1076,34 @@ namespace Write
             
             if (targetLine == currentLine) return; // No movement needed
             
-            // Calculate target Y position
-            float targetY = GetYOffsetToLine(targetLine);
-            var newIndex = GetIndexFromPosition(new Point((int)currentPos.X, (int)targetY));
+            // Calculate the horizontal position (column) within the current line
+            var currentLineInfo = _lines[currentLine];
+            int columnInCurrentLine = _cursorPosition - currentLineInfo.StartIndex;
+            
+            // Find the best position in the target line
+            var targetLineInfo = _lines[targetLine];
+            int newIndex;
+            
+            if (columnInCurrentLine >= targetLineInfo.Length)
+            {
+                // If the target line is shorter, go to the end of the target line
+                // But don't include the newline character if it exists
+                newIndex = targetLineInfo.StartIndex + targetLineInfo.Length;
+                if (newIndex > 0 && newIndex <= _textElements.Count && 
+                    newIndex < _textElements.Count && 
+                    (_textElements[newIndex - 1].Text == "\n" || _textElements[newIndex - 1].Text == "\r\n"))
+                {
+                    newIndex--;
+                }
+            }
+            else
+            {
+                // Move to the same column position in the target line
+                newIndex = targetLineInfo.StartIndex + columnInCurrentLine;
+            }
+            
+            // Ensure the new index is within bounds
+            newIndex = Math.Max(0, Math.Min(newIndex, _textElements.Count));
 
             if (shift)
             {

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 
 namespace Write
 {
@@ -39,7 +39,7 @@ namespace Write
                 textEditor.AllowDrop = true;
                 
                 // Add some sample text with emojis to test Unicode handling
-                textEditor.Text = "Welcome to Write! ??\n\nThis editor properly handles Unicode characters including:\n� Emojis: ?? ?? ?? ? ??\n� Accented characters: ������������\n� Other scripts: ?? ??????? ????????\n\nTry editing and deleting - emojis are treated as single characters! ??";
+                textEditor.Text = "Start🚀 \r\nNormal ASCII: ABC xyz 123 !@#  \r\nEmoji combos: 👩‍💻👨‍👩‍👧‍👦🇿🇦🏳️‍🌈  \r\nZero-width joiner: a‍b‍c (looks like abc but has hidden chars)  \r\nZero-width space: hello​world (no visible space)  \r\nRight-to-left: שלום مرحبا (mixed directions)  \r\nCombining accents: é vs é vs ē (all look different/same depending on render)  \r\nFull-width chars: ＡＢＣ１２３＠＃％  \r\nSurrogate pair edge: 𐍈 (Gothic letter hwair, outside BMP)  \r\nControl chars: A\\bB\\tC\\nD\\rE  \r\nMath/Unicode: ∞ ∑ π 𝒜 𝔅 𝓒  \r\nQuotes & apostrophes: ' \" ’ “ ”  \r\nSpecial whitespace: [ ] [ ] [ ] [ ] (narrow no-break, non-breaking, en-space, em-space)  \r\nEnd🎯\r\n";
             }
         }
 
